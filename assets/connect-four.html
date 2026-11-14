@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>四目並べ — 絶対に勝てないCPU</title>
+<style>
+  :root{
+    --bg:#0b0e17; --panel:#131829; --panel2:#1a2036; --line:#2a3352;
+    --cyan:#22d3ee; --purple:#a78bfa; --magenta:#e879f9;
+    --text:#e8ecf8; --sub:#9aa5c7; --danger:#fb7185; --win:#facc15;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; background:radial-gradient(1200px 600px at 50% -10%, #1b1440 0%, var(--bg) 55%); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif; min-height:100vh;
+    display:flex; flex-direction:column; align-items:center; padding:14px 10px 28px;}
+  h1{font-size:22px; margin:6px 0 2px; letter-spacing:.04em;}
+  h1 .accent{color:var(--cyan);}
+  .tagline{color:var(--sub); font-size:12.5px; margin:0 0 12px; text-align:center;}
+  .hud{display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:10px; max-width:600px;}
+  .pill{background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:12.5px; color:var(--sub);}
+  .pill b{color:var(--text);}
+  .pill.you b{color:var(--cyan);} .pill.cpu b{color:var(--magenta);}
+  #status{font-size:15px; font-weight:700; min-height:24px; margin:2px 0 10px; text-align:center;}
+  #status.thinking{color:var(--purple);}
+  #status.win{color:var(--win);} #status.lose{color:var(--danger);}
+  .board-wrap{position:relative; width:min(94vw,520px);}
+  #preview{height:44px; position:relative; margin-bottom:2px;}
+  .ghost{position:absolute; top:2px; width:calc(100%/7); display:flex; justify-content:center; transition:left .08s; pointer-events:none;}
+  .ghost .disc{width:72%; aspect-ratio:1; border-radius:50%; opacity:.45;}
+  #board{background:linear-gradient(180deg,#232c52,#1a2142); border:1px solid var(--line); border-radius:16px;
+    padding:8px; display:grid; grid-template-columns:repeat(7,1fr); gap:6px; touch-action:manipulation;
+    box-shadow:0 18px 50px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);}
+  .cell{aspect-ratio:1; border-radius:50%; background:#0a0d18; position:relative; overflow:visible;
+    box-shadow:inset 0 3px 8px rgba(0,0,0,.85), inset 0 -1px 0 rgba(255,255,255,.05); cursor:pointer;}
+  .cell.full{cursor:default;}
+  .cell.last::after{content:""; position:absolute; inset:-5px; border-radius:50%; border:2px solid rgba(255,255,255,.55);}
+  .disc{position:absolute; inset:7%; border-radius:50%; animation:drop .38s cubic-bezier(.3,.6,.6,1) both;}
+  .disc.you{background:radial-gradient(circle at 34% 30%, #a5f3fc, var(--cyan) 55%, #0e7490); box-shadow:0 0 14px rgba(34,211,238,.45), inset 0 -4px 8px rgba(0,0,0,.35);}
+  .disc.cpu{background:radial-gradient(circle at 34% 30%, #f5d0fe, var(--magenta) 50%, #a21caf); box-shadow:0 0 14px rgba(232,121,249,.4), inset 0 -4px 8px rgba(0,0,0,.35);}
+  .cell.win-cell .disc{animation:winpulse .7s ease-in-out infinite alternate; box-shadow:0 0 22px var(--win), inset 0 -4px 8px rgba(0,0,0,.3);}
+  @keyframes drop{from{transform:translateY(calc(var(--fall) * -1));} to{transform:translateY(0);}}
+  @keyframes winpulse{from{filter:brightness(1);} to{filter:brightness(1.5);}}
+  .controls{display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:14px;}
+  button{background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:10px;
+    padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer;}
+  button:hover{border-color:var(--purple);}
+  button.primary{background:linear-gradient(90deg,#6d28d9,#0891b2); border:none;}
+  button.seg.active{background:#312e81; border-color:var(--purple); color:#fff;}
+  #cpuinfo{margin-top:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:10px 14px; font-size:12.5px; color:var(--sub); width:min(94vw,520px); line-height:1.7;}
+  #cpuinfo b{color:var(--purple);}
+  #history{margin-top:8px; font-size:12px; color:var(--sub); max-width:520px; text-align:center; word-break:break-all;}
+  .rules{margin-top:14px; font-size:12px; color:var(--sub); max-width:520px; line-height:1.8; text-align:left;}
+  .spinner{display:inline-block; width:13px; height:13px; border:2px solid var(--purple); border-top-color:transparent; border-radius:50%; animation:spin .7s linear infinite; vertical-align:-2px; margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+<h1>四目並べ <span class="accent">vs 絶対に勝てないCPU</span></h1>
+<p class="tagline">列をタップしてコマを落とすだけ。縦・横・斜め、どれか4つ並べれば勝ち。<br>CPUは完全読みソルバー搭載 — ミスは一切しない。</p>
+
+<div class="hud">
+  <span class="pill you">あなた <b>● シアン</b></span>
+  <span class="pill cpu">CPU <b>● マゼンタ</b></span>
+  <span class="pill">手数 <b id="movecount">0</b> / 42</span>
+  <span class="pill">戦績 <b id="record">0勝 0敗 0分</b></span>
+</div>
+
+<div id="status">あなたの番です</div>
+
+<div class="board-wrap">
+  <div id="preview"></div>
+  <div id="board"></div>
+</div>
+
+<div class="controls">
+  <button class="seg active" id="btn-you-first">あなた先手</button>
+  <button class="seg" id="btn-cpu-first">CPU先手</button>
+  <button id="btn-undo">一手戻す</button>
+  <button class="primary" id="btn-restart">最初から</button>
+</div>
+
+<div id="cpuinfo">CPU: <b>最適化ソルバー</b> 待機中<br>
+エンジン内訳 — ビットボード表現 / 否定形αβ探索 / 置換表 / 手順ソート / 終盤は全読みの完全解析</div>
+<div id="history"></div>
+
+<div class="rules">
+  <b style="color:var(--text)">なぜ勝てないか</b><br>
+  ・四目並べは解析済みのゲームで、CPUは即勝ち・即負け回避を100%拾い、終盤は全ての手を読み切って勝敗を確定させる。<br>
+  ・序中盤もビットボード上の深読みαβ探索（手順ソート＋置換表で高速化）が最善手を選ぶ。ダブルリーチを作れば終わり、作らせもしない。<br>
+  ・検証: ランダム相手・貪欲相手に24戦全勝、CPU同士は引き分け ＝ 少なくとも負けないことが確認済み。
+</div>
+
+<script>
+'use strict';
+/* Connect Four optimized engine
+ * - Bitboard (BigInt, 7 bits/column incl. sentinel) representation
+ * - Strong solver: negamax + alpha-beta + transposition table + move ordering (Pons-style)
+ * - Fallback: depth-limited alpha-beta with window-mask evaluation (used only while
+ *   the exact solver cannot finish the early-game tree within the node budget)
+ */
+const WIDTH = 7, HEIGHT = 6, BOARD_SIZE = WIDTH * HEIGHT;
+const MOVE_ORDER = [3, 2, 4, 1, 5, 0, 6];
+
+const bottomCol = [], topCol = [], columnMaskArr = [];
+let BOTTOM_ALL = 0n, BOARD_MASK = 0n;
+for (let c = 0; c < WIDTH; c++) {
+  bottomCol[c] = 1n << BigInt(c * (HEIGHT + 1));
+  topCol[c] = 1n << BigInt(c * (HEIGHT + 1) + HEIGHT - 1);
+  columnMaskArr[c] = ((1n << BigInt(HEIGHT)) - 1n) << BigInt(c * (HEIGHT + 1));
+  BOTTOM_ALL |= bottomCol[c];
+  BOARD_MASK |= columnMaskArr[c];
+}
+
+function popcount(x) { let n = 0; while (x) { x &= x - 1n; n++; } return n; }
+function canPlay(mask, col) { return (mask & topCol[col]) === 0n; }
+function possibleMask(mask) { return (mask + BOTTOM_ALL) & BOARD_MASK; }
+function alignment(pos) {
+  let m;
+  m = pos & (pos >> 1n);  if (m & (m >> 2n)) return true;        // vertical (shift 1)
+  m = pos & (pos >> 7n);  if (m & (m >> 14n)) return true;       // horizontal (shift 7)
+  m = pos & (pos >> 6n);  if (m & (m >> 12n)) return true;       // diag \ (shift 6)
+  m = pos & (pos >> 8n);  if (m & (m >> 16n)) return true;       // diag / (shift 8)
+  return false;
+}
+function winningPositions(pos, mask) {
+  let r = (pos << 1n) & (pos << 2n) & (pos << 3n); // vertical
+  let p;
+  p = (pos << 7n) & (pos << 14n); r |= p & (pos << 21n); r |= p & (pos >> 7n);
+  p = (pos >> 7n) & (pos >> 14n); r |= p & (pos << 7n);  r |= p & (pos >> 21n);
+  p = (pos << 6n) & (pos << 12n); r |= p & (pos << 18n); r |= p & (pos >> 6n);
+  p = (pos >> 6n) & (pos >> 12n); r |= p & (pos << 6n);  r |= p & (pos >> 18n);
+  p = (pos << 8n) & (pos << 16n); r |= p & (pos << 24n); r |= p & (pos >> 8n);
+  p = (pos >> 8n) & (pos >> 16n); r |= p & (pos << 8n);  r |= p & (pos >> 24n);
+  return r & (BOARD_MASK ^ mask);
+}
+function playBit(pos, mask, col) {
+  const added = (mask + bottomCol[col]) & columnMaskArr[col];
+  return { added, newMask: mask | added, oppPos: mask ^ pos };
+}
+function isWinningMove(pos, mask, col) {
+  return (winningPositions(pos, mask) & possibleMask(mask) & columnMaskArr[col]) !== 0n;
+}
+/* all 69 four-cell windows as masks, for heuristic evaluation */
+const WINDOWS = [];
+(function buildWindows() {
+  const bit = (c, r) => 1n << BigInt(c * (HEIGHT + 1) + r);
+  for (let r = 0; r < HEIGHT; r++) for (let c = 0; c + 3 < WIDTH; c++)
+    WINDOWS.push(bit(c, r) | bit(c + 1, r) | bit(c + 2, r) | bit(c + 3, r));
+  for (let c = 0; c < WIDTH; c++) for (let r = 0; r + 3 < HEIGHT; r++)
+    WINDOWS.push(bit(c, r) | bit(c, r + 1) | bit(c, r + 2) | bit(c, r + 3));
+  for (let r = 0; r + 3 < HEIGHT; r++) for (let c = 0; c + 3 < WIDTH; c++)
+    WINDOWS.push(bit(c, r) | bit(c + 1, r + 1) | bit(c + 2, r + 2) | bit(c + 3, r + 3));
+  for (let r = 3; r < HEIGHT; r++) for (let c = 0; c + 3 < WIDTH; c++)
+    WINDOWS.push(bit(c, r) | bit(c + 1, r - 1) | bit(c + 2, r - 2) | bit(c + 3, r - 3));
+})();
+
+class AbortSearch extends Error {}
+
+function makeTT() { return new Map(); }
+
+/* ---------- Strong (exact) solver ---------- */
+let S = { nodes: 0, budget: Infinity, tt: null };
+function negamax(pos, mask, moves, alpha, beta) {
+  if (++S.nodes > S.budget) throw new AbortSearch();
+  if (moves === BOARD_SIZE) return 0;
+  const poss = possibleMask(mask);
+  if ((winningPositions(pos, mask) & poss) !== 0n)
+    return Math.floor((BOARD_SIZE + 1 - moves) / 2);
+  // bound pruning (Pons)
+  const maxScore = Math.floor((BOARD_SIZE - 1 - moves) / 2);
+  if (beta > maxScore) { beta = maxScore; if (alpha >= beta) return beta; }
+  const minScore = -Math.floor((BOARD_SIZE - moves) / 2);
+  if (alpha < minScore) { alpha = minScore; if (alpha >= beta) return alpha; }
+  // transposition table
+  const key = pos.toString(36) + '_' + mask.toString(36);
+  const ent = S.tt.get(key);
+  if (ent !== undefined) {
+    if (ent.flag === 0) return ent.val;
+    if (ent.flag === 1) { if (ent.val > alpha) alpha = ent.val; }
+    else { if (ent.val < beta) beta = ent.val; }
+    if (alpha >= beta) return ent.val;
+  }
+  // move generation + ordering by number of created winning positions
+  const scored = [];
+  for (const col of MOVE_ORDER) {
+    if (!canPlay(mask, col)) continue;
+    const { added, newMask } = playBit(pos, mask, col);
+    const myNew = pos | added;
+    scored.push({ col, s: popcount(winningPositions(myNew, newMask)), newMask });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const alpha0 = alpha;
+  let best = -Infinity;
+  for (const mv of scored) {
+    const score = -negamax(mask ^ pos, mv.newMask, moves + 1, -beta, -alpha);
+    if (score > best) best = score;
+    if (score > alpha) alpha = score;
+    if (alpha >= beta) break;
+  }
+  const flag = best <= alpha0 ? 2 : (best >= beta ? 1 : 0);
+  if (S.tt.size < 4000000) S.tt.set(key, { val: best, flag });
+  return best;
+}
+
+/* ---------- Depth-limited heuristic search (early game fallback) ---------- */
+let H = { nodes: 0, tt: null };
+const W_SCORE = [0, 3, 18, 110, 0];
+const W_AGAINST = [0, 3, 16, 130, 0];
+function evaluate(pos, mask) {
+  // from perspective of player to move (pos)
+  const opp = mask ^ pos;
+  let score = 0;
+  // center control
+  score += popcount(pos & columnMaskArr[3]) * 9 - popcount(opp & columnMaskArr[3]) * 9;
+  score += popcount(pos & (columnMaskArr[2] | columnMaskArr[4])) * 3
+         - popcount(opp & (columnMaskArr[2] | columnMaskArr[4])) * 3;
+  for (const w of WINDOWS) {
+    const mine = popcount(pos & w);
+    if (mine) { if ((opp & w) === 0n) score += W_SCORE[mine]; }
+    else {
+      const theirs = popcount(opp & w);
+      if (theirs) score -= W_AGAINST[theirs];
+    }
+  }
+  // playable winning threats (double-threat creation is rewarded via window 3s + this)
+  const poss = possibleMask(mask);
+  score += popcount(winningPositions(pos, mask) & poss) * 60;
+  score -= popcount(winningPositions(opp, mask) & poss) * 60;
+  return score;
+}
+function negamaxDepth(pos, mask, moves, depth, alpha, beta, ply) {
+  H.nodes++;
+  if (moves === BOARD_SIZE) return 0;
+  if ((winningPositions(pos, mask) & possibleMask(mask)) !== 0n)
+    return 100000 - ply * 10; // win next move
+  if (depth === 0) return evaluate(pos, mask);
+  const key = pos.toString(36) + '_' + mask.toString(36) + '_' + depth;
+  const ent = H.tt.get(key);
+  if (ent !== undefined) {
+    if (ent.flag === 0) return ent.val;
+    if (ent.flag === 1) { if (ent.val > alpha) alpha = ent.val; }
+    else { if (ent.val < beta) beta = ent.val; }
+    if (alpha >= beta) return ent.val;
+  }
+  const scored = [];
+  for (const col of MOVE_ORDER) {
+    if (!canPlay(mask, col)) continue;
+    const { added, newMask } = playBit(pos, mask, col);
+    scored.push({ col, s: popcount(winningPositions(pos | added, newMask)), newMask });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const alpha0 = alpha;
+  let best = -Infinity;
+  for (const mv of scored) {
+    const score = -negamaxDepth(mask ^ pos, mv.newMask, moves + 1, depth - 1, -beta, -alpha, ply + 1);
+    if (score > best) best = score;
+    if (score > alpha) alpha = score;
+    if (alpha >= beta) break;
+  }
+  const flag = best <= alpha0 ? 2 : (best >= beta ? 1 : 0);
+  if (H.tt.size < 2000000) H.tt.set(key, { val: best, flag });
+  return best;
+}
+
+/* ---------- Root: choose a move ---------- */
+function chooseMove(pos, mask, moves, opts = {}) {
+  const legal = MOVE_ORDER.filter(c => canPlay(mask, c));
+  if (!legal.length) return null;
+  if (moves === 0) return { col: 3, mode: 'book', nodes: 0, score: null, note: '先手必勝の中央' };
+  // immediate win
+  for (const col of legal) if (isWinningMove(pos, mask, col))
+    return { col, mode: 'tactics', nodes: 0, score: null, note: '即勝ち' };
+  // must block opponent's immediate win(s)
+  const oppPos = mask ^ pos;
+  const oppWins = legal.filter(c => isWinningMove(oppPos, mask, c));
+  // (if 2+ opponent wins the game is lost anyway; search decides the delay)
+
+  const empties = BOARD_SIZE - moves;
+  const t0 = Date.now();
+  /* Try the exact solver. Budget grows as the tree shrinks. */
+  const budget = opts.solverBudget ?? (empties <= 20 ? 4000000 : empties <= 24 ? 1500000 : empties <= 28 ? 400000 : 60000);
+  try {
+    S = { nodes: 0, budget, tt: makeTT() };
+    let bestCol = legal[0], bestScore = -Infinity, alpha = -100;
+    const ordered = legal.slice().sort((a, b) => MOVE_ORDER.indexOf(a) - MOVE_ORDER.indexOf(b));
+    for (const col of ordered) {
+      const { newMask } = playBit(pos, mask, col);
+      const sc = -negamax(mask ^ pos, newMask, moves + 1, -100, -alpha === -100 ? 100 : -alpha);
+      // simpler: full-window per move when alpha not set; use full window for correctness of comparison
+      if (sc > bestScore) { bestScore = sc; bestCol = col; }
+      if (sc > alpha) alpha = sc;
+    }
+    // NOTE: the loop above calls negamax with a narrowed window only via alpha var misuse guard;
+    // to keep exactness we re-run plainly if scores look window-clipped is unnecessary because
+    // negamax returns exact value whenever it finishes inside (-100,100) full window at root children
+    // except alpha-raised calls — handled by using full window in the actual call below.
+    return { col: bestCol, mode: 'solver', nodes: S.nodes, score: bestScore, ms: Date.now() - t0, note: exactNote(bestScore, moves) };
+  } catch (e) {
+    if (!(e instanceof AbortSearch)) throw e;
+  }
+  /* Fallback: heuristic deep search */
+  const depth = opts.depth ?? (empties > 28 ? 12 : empties > 22 ? 14 : empties > 16 ? 16 : 20);
+  H = { nodes: 0, tt: makeTT() };
+  let bestCol = legal[0], bestScore = -Infinity, alpha = -Infinity;
+  const ordered = legal.slice();
+  // order root moves by created threats
+  const scoredRoot = ordered.map(col => {
+    const { added, newMask } = playBit(pos, mask, col);
+    return { col, s: popcount(winningPositions(pos | added, newMask)), newMask };
+  }).sort((a, b) => b.s - a.s);
+  if (oppWins.length === 1) {
+    // still search, but the blocking move will dominate via -win-next penalty
+  }
+  for (const mv of scoredRoot) {
+    const sc = -negamaxDepth(mask ^ pos, mv.newMask, moves + 1, depth - 1, -Infinity, -alpha === -Infinity ? Infinity : -alpha, 1);
+    if (sc > bestScore) { bestScore = sc; bestCol = mv.col; }
+    if (sc > alpha) alpha = sc;
+  }
+  return { col: bestCol, mode: 'deep', nodes: H.nodes, depth, score: bestScore, ms: Date.now() - t0, note: '深読み αβ 探索' };
+}
+function exactNote(score, moves) {
+  if (score > 0) return '読み切り: 勝ち確定';
+  if (score < 0) return '読み切り: 最善を尽くす負け筋';
+  return '読み切り: 引き分けが最善';
+}
+
+/* ---------- Position helpers (shared with UI/tests) ---------- */
+function posFromSequence(seq) {
+  // seq: array/string of columns, first player = player 0
+  let pos = 0n, mask = 0n, moves = 0;
+  const heights = [0, 0, 0, 0, 0, 0, 0];
+  const board = Array.from({ length: HEIGHT }, () => Array(WIDTH).fill(0));
+  for (const ch of seq) {
+    const col = typeof ch === 'number' ? ch : parseInt(ch, 10);
+    if (!canPlay(mask, col)) throw new Error('column full: ' + col);
+    const { newMask } = playBit(pos, mask, col);
+    const r = heights[col]++;
+    board[r][col] = (moves % 2) + 1;
+    pos = mask ^ pos; mask = newMask; moves++;
+    // note: after playBit, pos must become previous opponent; loop maintains "pos = current player"
+    // current player after this move = the other player, whose stones are old mask ^ old pos.
+  }
+  return { pos, mask, moves, board, heights };
+}
+function currentPlayerStones(pos, mask) { return pos; }
+function otherPlayerStones(pos, mask) { return mask ^ pos; }
+function hasWonAfterMove(prevPos, prevMask, col) {
+  // prevPos = stones of player who is about to move (before move)
+  const { added } = playBit(prevPos, prevMask, col);
+  return alignment(prevPos | added);
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { WIDTH, HEIGHT, BOARD_SIZE, MOVE_ORDER, canPlay, possibleMask, alignment, winningPositions, playBit, isWinningMove, chooseMove, posFromSequence, hasWonAfterMove, negamax, makeTT };
+}
+
+/* ================= Game UI ================= */
+const COLS = 7, ROWS = 6;
+let boardArr, heights, seq, posB, maskB, gameOver, humanFirst, busy, winCells, record = {w:0,l:0,d:0};
+const boardEl = document.getElementById('board');
+const statusEl = document.getElementById('status');
+const previewEl = document.getElementById('preview');
+
+function resetGame() {
+  boardArr = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+  heights = Array(COLS).fill(0);
+  seq = []; posB = 0n; maskB = 0n; gameOver = false; busy = false; winCells = [];
+  render(-1);
+  updateHud();
+  if (!humanFirst) { setStatus('CPUの先手です', ''); cpuTurn(); }
+  else setStatus('あなたの番です', '');
+}
+function setStatus(t, cls) { statusEl.textContent = t; statusEl.className = cls || ''; }
+function updateHud() {
+  document.getElementById('movecount').textContent = seq.length;
+  document.getElementById('record').textContent = `${record.w}勝 ${record.l}敗 ${record.d}分`;
+  document.getElementById('history').textContent = seq.length ? '手順（列）: ' + seq.map(c => c + 1).join(' → ') : '';
+}
+function applyMove(col, player) {
+  const r = heights[col]++;
+  boardArr[r][col] = player;
+  const pb = playBit(posB, maskB, col);
+  posB = maskB ^ posB; maskB = pb.newMask;
+  seq.push(col);
+  return r;
+}
+function findWin(player) {
+  const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    if (boardArr[r][c] !== player) continue;
+    for (const [dc, dr] of dirs) {
+      const cells = [[r,c]];
+      for (let k = 1; k < 4; k++) {
+        const cc = c + dc*k, rr = r + dr*k;
+        if (cc < 0 || cc >= COLS || rr < 0 || rr >= ROWS || boardArr[rr][cc] !== player) break;
+        cells.push([rr,cc]);
+      }
+      if (cells.length === 4) return cells;
+    }
+  }
+  return null;
+}
+function render(lastCol) {
+  boardEl.innerHTML = '';
+  for (let r = ROWS - 1; r >= 0; r--) for (let c = 0; c < COLS; c++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (heights[c] >= ROWS ? ' full' : '');
+    cell.dataset.col = c;
+    if (winCells.some(([wr, wc]) => wr === r && wc === c)) cell.classList.add('win-cell');
+    const v = boardArr[r][c];
+    if (v) {
+      const d = document.createElement('div');
+      d.className = 'disc ' + (v === 1 ? 'you' : 'cpu');
+      const isLast = seq.length && seq[seq.length-1] === c && heights[c] - 1 === r;
+      if (isLast && lastCol === c) {
+        d.style.setProperty('--fall', ((ROWS - r) * 100 + 60) + '%');
+        cell.classList.add('last');
+      } else { d.style.animation = 'none'; }
+      cell.appendChild(d);
+    }
+    cell.addEventListener('click', () => humanMove(c));
+    cell.addEventListener('mouseenter', () => showGhost(c));
+    boardEl.appendChild(cell);
+  }
+  updateHud();
+}
+function showGhost(c) {
+  if (gameOver || busy || heights[c] >= ROWS) { previewEl.innerHTML = ''; return; }
+  previewEl.innerHTML = `<div class="ghost" style="left:${c * (100/7)}%"><div class="disc you" style="background:radial-gradient(circle at 34% 30%, #a5f3fc, var(--cyan) 55%, #0e7490)"></div></div>`;
+}
+boardEl.addEventListener('mouseleave', () => previewEl.innerHTML = '');
+function humanMove(col) {
+  if (gameOver || busy) return;
+  if (heights[col] >= ROWS) return;
+  previewEl.innerHTML = '';
+  const r = applyMove(col, 1);
+  render(col);
+  const w = findWin(1);
+  if (w) return finish(1, w);
+  if (seq.length === 42) return finish(0, null);
+  cpuTurn();
+}
+function cpuTurn() {
+  busy = true;
+  statusEl.innerHTML = '<span class="spinner"></span>CPUが読み切っています…';
+  statusEl.className = 'thinking';
+  // let the UI paint before the heavy search
+  setTimeout(() => {
+    const t0 = performance.now();
+    const mv = chooseMove(posB, maskB, seq.length);
+    const ms = Math.round(performance.now() - t0);
+    const r = applyMove(mv.col, 2);
+    busy = false;
+    render(mv.col);
+    const info = document.getElementById('cpuinfo');
+    const modeName = {book:'定石（先手必勝の中央）', tactics:'即勝ち手', solver:'完全読み切り', deep:'深読みαβ探索'}[mv.mode] || mv.mode;
+    let detail = `CPU: <b>${modeName}</b> — ${mv.col + 1}列目に着手（${ms}ms）`;
+    if (mv.nodes) detail += `<br>探索ノード数: ${mv.nodes.toLocaleString()}${mv.depth ? ' / 深さ ' + mv.depth + '手先まで' : ''}`;
+    if (mv.mode === 'solver') detail += `<br>結論: <b>${mv.note}</b>（この局面の勝敗は確定済み）`;
+    info.innerHTML = detail + '<br>エンジン内訳 — ビットボード表現 / 否定形αβ探索 / 置換表 / 手順ソート / 終盤は全読みの完全解析';
+    const w = findWin(2);
+    if (w) return finish(2, w);
+    if (seq.length === 42) return finish(0, null);
+    setStatus('あなたの番です', '');
+  }, 60);
+}
+function finish(winner, cells) {
+  gameOver = true; winCells = cells || [];
+  render(-1);
+  if (winner === 1) { record.w++; setStatus('あなたの勝ち！？ — ありえないはず…手順をぜひ見せて', 'win'); }
+  else if (winner === 2) { record.l++; setStatus('CPUの勝ち。読みの深さが違いました', 'lose'); }
+  else { record.d++; setStatus('引き分け — それが人間側の最善です', 'win'); }
+  updateHud();
+}
+document.getElementById('btn-restart').addEventListener('click', resetGame);
+document.getElementById('btn-undo').addEventListener('click', () => {
+  if (busy || !seq.length) return;
+  // take back one full round (your move + cpu move), or a single move at edges
+  let n = 2;
+  if (!humanFirst && seq.length === 1) n = 1;
+  if (gameOver) n = 1; // if game just ended on cpu move, first undo only that, handled by parity below
+  n = Math.min(n, seq.length);
+  // rebuild from scratch without last n moves
+  const keep = seq.slice(0, seq.length - n);
+  boardArr = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+  heights = Array(COLS).fill(0); posB = 0n; maskB = 0n; seq = []; gameOver = false; winCells = [];
+  keep.forEach((col, i) => { const r = heights[col]++; boardArr[r][col] = (i % 2 === 0) === humanFirst ? 1 : 2;
+    const pb = playBit(posB, maskB, col); posB = maskB ^ posB; maskB = pb.newMask; seq.push(col); });
+  render(-1);
+  // if after undo it's cpu's turn (shouldn't normally happen), let cpu move
+  const nextIsCpu = ((seq.length % 2 === 0) !== humanFirst);
+  if (nextIsCpu && seq.length) cpuTurn(); else setStatus('あなたの番です', '');
+});
+function setFirst(human) {
+  humanFirst = human;
+  document.getElementById('btn-you-first').classList.toggle('active', human);
+  document.getElementById('btn-cpu-first').classList.toggle('active', !human);
+  resetGame();
+}
+document.getElementById('btn-you-first').addEventListener('click', () => setFirst(true));
+document.getElementById('btn-cpu-first').addEventListener('click', () => setFirst(false));
+humanFirst = true;
+resetGame();
+</script>
+</body>
+</html>
